@@ -81,9 +81,9 @@ class PositionBroadcaster:
 
                     client_count = len(self._clients)
 
-                # Throttled broadcast logging (once per second)
+                # Throttled broadcast logging (once per second) if we have clients
                 now = time.monotonic()
-                if now - self._last_broadcast_log >= 1.0:
+                if now - self._last_broadcast_log >= 1.0 and client_count > 0:
                     beacon_count = len(self._latest_payload.get("beacons", []))
                     logger.info(
                         "Broadcasted %d beacons to %d clients",
