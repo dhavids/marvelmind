@@ -1,41 +1,95 @@
 import time
+from pathlib import Path
+from typing import Dict, Tuple
+
+from utils.logging_setup import setup_logging, get_logger
+
+# Logging setup (must be first)
+setup_logging(Path("logs"))
+logger = get_logger("test")
 
 from src.position_tracker import PositionTracker
 from utils.plotter import PositionPlotter
+from utils.csv_writer import PositionCSVWriter
+from utils.broadcaster import PositionBroadcaster
+from utils.sink import PositionSink
 
+# Helpers for console printing (only on change)
+EPS = 1e-4
+
+
+def _pos_tuple(p) -> Tuple[float, float, float]:
+    return (round(p.x, 4), round(p.y, 4), round(p.z, 4))
+
+
+def _snapshot(tracker: PositionTracker) -> Dict[Tuple[str, int], Tuple[float, float, float]]:
+    snap = {}
+
+    for bid, pos in tracker.get_mobile_positions().items():
+        snap[("MOBILE", bid)] = _pos_tuple(pos)
+
+    for bid, pos in tracker.get_stationary_map().items():
+        snap[("STAT", bid)] = _pos_tuple(pos)
+
+    return snap
+
+
+def _print_snapshot(snap: Dict[Tuple[str, int], Tuple[float, float, float]]) -> None:
+    for (label, bid), (x, y, z) in sorted(snap.items()):
+        print(f"{label:<6} {bid}: x={x:.3f}, y={y:.3f}, z={z:.3f}")
+
+
+# Component setup
 tracker = PositionTracker(use_ema=True)
+
+csv_writer = PositionCSVWriter(Path("positions_out.csv"))
+broadcaster = PositionBroadcaster(port=5555, rate_hz=20)
+broadcaster.start()
+
+sink = PositionSink(
+    csv_writer=csv_writer,
+    broadcaster=broadcaster,
+)
+
 plotter = PositionPlotter(
-    decay_seconds=20.0,
-    trail_seconds=12.0,
-    velocity_scale=0.5,
+    trail_seconds=50.0,
+    decay_seconds=30.0,
+    refresh_interval=0.2,
     show_pos=True,
 )
 
-last_printed = {}
+logger.info("Test loop started")
 
-while True:
-    tracker.update()
-    current = {}
+last_snapshot: Dict[Tuple[str, int], Tuple[float, float, float]] = {}
 
-    for bid, pos in tracker.get_mobile_positions().items():
-        key = ("MOBILE", bid)
-        value = (pos.x, pos.y, pos.z)
-        current[key] = value
+# Main loop
+try:
+    while True:
+        tracker.update()
 
-        if last_printed.get(key) != value:
-            print(f"MOBILE {bid}: x={pos.x:.3f}, y={pos.y:.3f}, z={pos.z:.3f}")
+        # Publish to CSV + broadcaster
+        sink.publish(tracker)
 
-        plotter.update("MOBILE", bid, pos.x, pos.y, pos.z)
+        # Update plotter (always)
+        for bid, pos in tracker.get_mobile_positions().items():
+            plotter.update("MOBILE", bid, pos.x, pos.y, pos.z)
 
-    for bid, pos in tracker.get_stationary_map().items():
-        key = ("STAT", bid)
-        value = (pos.x, pos.y, pos.z)
-        current[key] = value
+        for bid, pos in tracker.get_stationary_map().items():
+            plotter.update("STATIONARY", bid, pos.x, pos.y, pos.z)
 
-        if last_printed.get(key) != value:
-            print(f"STAT   {bid}: x={pos.x:.3f}, y={pos.y:.3f}, z={pos.z:.3f}")
+        # Console printing only when data changes
+        current_snapshot = _snapshot(tracker)
+        if current_snapshot != last_snapshot:
+            _print_snapshot(current_snapshot)
+            last_snapshot = current_snapshot
 
-        plotter.update("STAT", bid, pos.x, pos.y, pos.z)
+        time.sleep(0.02)
 
-    last_printed = current
-    time.sleep(0.1)
+except KeyboardInterrupt:
+    logger.info("Shutting down test loop")
+
+finally:
+    broadcaster.stop()
+    csv_writer.close()
+    plotter.close()
+    logger.info("Shutdown complete")

@@ -6,6 +6,9 @@ from typing import Dict, Tuple
 import matplotlib
 matplotlib.use("TkAgg")
 
+from utils.logging_setup import get_logger
+logger = get_logger(__name__)
+
 import matplotlib.pyplot as plt
 
 
@@ -32,6 +35,7 @@ class PositionPlotter:
         self.fig, self.ax = plt.subplots()
         self._setup_axes()
         plt.show(block=False)
+        logger.info("Plotter initialized")
 
         self.fig.canvas.mpl_connect("key_press_event", self._on_key)
 
@@ -166,5 +170,6 @@ class PositionPlotter:
         self._running = False
         try:
             plt.close(self.fig)
+            logger.info("Plotter closed")
         except Exception:
             pass
